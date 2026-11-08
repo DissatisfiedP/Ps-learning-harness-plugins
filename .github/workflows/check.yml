@@ -1,0 +1,39 @@
+# Packs and checks every plugin on pull requests and on pushes to branches
+# other than master (master runs publish.yml, which checks first).
+#
+# Nothing here writes anywhere: it compares the packages against the live
+# index and uploads out/ (packages + the index the merge would publish) for
+# review.
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Pack and check plugins
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The script runs in the flake's dev shell so tar and gzip are the pinned
+      # builds: a published version must pack to the same sha256 every time.
+      - uses: cachix/install-nix-action@v31
+      - name: Pack and check
+        run: nix develop --command scripts/registry.sh check
+      - name: Upload the packages and the next index
+        uses: actions/upload-artifact@v4
+        with:
+          name: registry-out
+          path: |
+            out/packages/
+            out/site/
+          if-no-files-found: error

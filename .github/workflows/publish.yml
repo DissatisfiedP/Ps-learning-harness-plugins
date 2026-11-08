@@ -1,0 +1,44 @@
+# On master: pack and check every plugin, create a GitHub Release for each new
+# version (the package is its asset), then deploy the index to GitHub Pages.
+#
+# Releases come first, so a deployed index never names a package that isn't
+# downloadable. A failed run is safe to re-run: an existing release is reused
+# only if it holds the same bytes.
+name: Publish
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write # releases
+  pages: write
+  id-token: write # deploy-pages
+
+# One publish at a time, never cancelled: each run builds on the index the
+# previous one deployed.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Release new versions and deploy the index
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}index.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Pack, check and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: nix develop --command scripts/registry.sh publish
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out/site
+      - id: deploy
+        uses: actions/deploy-pages@v4

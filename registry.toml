@@ -1,0 +1,11 @@
+# The registry's own settings, read by scripts/registry.sh.
+
+# What the app shows for this registry.
+name = "P's Learning Harness plugins"
+
+# The GitHub repository whose Releases hold the packages.
+repository = "DissatisfiedP/Ps-learning-harness-plugins"
+
+# Where publish.yml deploys the index (GitHub Pages). This is the URL to add in
+# the app under Settings → Registries.
+index_url = "https://dissatisfiedp.github.io/Ps-learning-harness-plugins/index.json"

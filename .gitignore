@@ -1,0 +1,17 @@
+# Nix and direnv
+/.direnv/
+/result
+/result-*
+
+# scripts/registry.sh output: packages and the index, published by CI, never committed
+/out/
+
+# Scratch files
+*.tmp
+
+# Editors and OS
+/.idea/
+/.vscode/
+*.swp
+*~
+.DS_Store

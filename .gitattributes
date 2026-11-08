@@ -1,0 +1,10 @@
+# Plugin sources are packed byte for byte, so a checkout must not rewrite them:
+# a CRLF conversion would change a published version's sha256. Text files are
+# LF everywhere, binaries are left alone.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.svg text eol=lf
+
+# Generated; never worth reading in a diff.
+flake.lock -diff
