@@ -278,7 +278,7 @@ publish() {
     <(gh release list --repo "$repository" --limit 10000 --json tagName --jq '.[].tagName' | sort) \
     <(jq -r '.plugins[] | .id as $id | .versions[] | "\($id)-v\(.version)"' out/site/index.json | sort))
   [[ -z $missing ]] ||
-    die "these releases are missing from the next index; restore the published index before publishing: ${missing//$'\n'/, }"
+    die "these releases are missing from the next index; run the Publish workflow by hand with \`base\` set to a copy of the last published index: ${missing//$'\n'/, }"
 
   local record id version tag file sha title
   while IFS= read -r record; do

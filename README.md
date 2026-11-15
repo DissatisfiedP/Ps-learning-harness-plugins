@@ -108,6 +108,10 @@ run at a time:
    metadata from each plugin's current `plugin.toml`. A plugin whose folder is
    deleted stays listed as published, because learners may have it installed.
 
+If the live index is lost (step 3 fails), run the Publish workflow by hand
+with `base` set to the URL of a copy of the last published index. It is
+compared against in place of the live one and deployed again.
+
 The package bytes, and so each sha256, depend on the tar and gzip builds.
 `flake.lock` pins them, and both workflows run the script inside
 `nix develop`. Updating `flake.lock` can change how existing versions pack,
@@ -118,7 +122,9 @@ with version bumps.
 
 1. Create the public repository `DissatisfiedP/Ps-learning-harness-plugins` (or
    change `repository` and `index_url` in `registry.toml`) and push `master`.
-2. Settings → Pages → Source: **GitHub Actions**.
+2. Settings → Pages → Source: **GitHub Actions**. With "Deploy from a branch",
+   GitHub builds the repository itself as a site on every push and deploys it
+   over the index.
 3. The first push to master releases every plugin and deploys the index.
 
 ## Not built yet

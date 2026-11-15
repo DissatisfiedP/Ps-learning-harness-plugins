@@ -10,6 +10,10 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      base:
+        description: URL of the index to compare against instead of the live one, to restore a lost index
+        required: false
 
 permissions:
   contents: write # releases
@@ -35,6 +39,8 @@ jobs:
       - name: Pack, check and release
         env:
           GH_TOKEN: ${{ github.token }}
+          # Empty except on a manual run that restores a lost index.
+          REGISTRY_BASE: ${{ inputs.base }}
         run: nix develop --command scripts/registry.sh publish
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
