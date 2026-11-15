@@ -507,7 +507,7 @@ Seeds above 2^53 are not exact as Lua numbers; neighbouring values may be the sa
 - `range` with `lo > hi` returns a value in (hi, lo] (`rand.seeded(42).range(20, 10)` → `19.9999999753589`); with `lo == hi` it returns `lo`.
 - `int` reduces by modulo, so very large spans are slightly biased. With `hi < lo` it always returns `lo` (`rand.seeded(42).int(6, 1)` → `6`). `int(3, 3)` → `3`. Negative bounds work (`int(-3, 3)`).
 - `int` needs whole numbers: `int(1.5, 6)` is `bad argument #1: error converting Lua number to i64 (out of range)`. `1.0` and `"1"` are accepted.
-- Keep `hi - lo` below 2^63. `int(-2^62, 2^62)` fails with `attempt to subtract with overflow` in the build tested here; that message comes from a debug-build check, so a release build may return a wrong number instead (not verified).
+- Any two whole numbers in the 64-bit integer range work, however far apart. App builds from before 2026-11-15 failed when `hi - lo` reached 2^63 (`int(-2^62, 2^62)` raised `attempt to subtract with overflow`); a plugin that must run on those keeps its spans below that.
 
 A shuffle (Fisher–Yates):
 
@@ -538,9 +538,16 @@ Converts `value` to JSON with the `json.encode` rules and emits it as one debug-
 log.debug({ step = "solve", n = 3 })
 ```
 
-The event is never shown to the model or the learner. In the build examined here it is also not shown to the developer: neither the `plugin` CLI nor the app installs a `tracing` subscriber (no use of `tracing-subscriber` anywhere in the app's source), and `plugin test` printed nothing for `log.debug` calls, with or without `RUST_LOG=debug`. Treat it as a no-op that validates its argument.
+The event is never shown to the model or the learner, and it is not a result channel. Who else sees it depends on the program running the plugin, which decides where the app core's `tracing` events go:
 
-For development output use `print`, which writes to the host process's standard output: visible in the terminal under `plugin test` (after the test report, because of buffering), invisible in the app. Neither is a result channel.
+| Program | `log.debug` lines |
+|---|---|
+| `plugin test` | on standard error as they happen, one line each: `2026-11-15T09:50:22.397575Z DEBUG plugin: {"n":3,"step":"solve"}`. The test report goes to standard output, so `2>/dev/null` hides them |
+| the app | on its standard error only when it is started with `PS_LEARN_LOG=debug` (it shows `info` and above otherwise) |
+
+`PS_LEARN_LOG` (`error`, `warn`, `info`, `debug`, `trace`) sets the level for either; `PS_LEARN_LOG=warn plugin test <dir>` silences the lines. App builds from before 2026-11-15 installed no `tracing` subscriber, so there `log.debug` printed nothing anywhere.
+
+`print` also works for development output: it writes to the host process's standard output, visible in the terminal under `plugin test` (after the test report, because of buffering) and invisible in the app.
 
 ## `@harness/test`
 

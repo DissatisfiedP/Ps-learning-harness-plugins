@@ -10,9 +10,9 @@ local log = {}
 	Converts `value` to JSON (the rules of `json.encode`) and emits it as one
 	debug-level event on the host's `tracing` log, target `plugin`. Returns
 	nothing. The line is never shown to the model or the learner and is not a
-	result channel; whether anything records it depends on the host build
-	(see docs/host-api.md). `print` is the practical alternative under
-	`plugin test`.
+	result channel. `plugin test` prints it on standard error
+	(`<time> DEBUG plugin: <json>`); the app prints it only when started with
+	`PS_LEARN_LOG=debug` (see docs/host-api.md).
 
 	Errors: the two `json.encode` errors (a table that refers to itself,
 	nesting deeper than 64 tables).

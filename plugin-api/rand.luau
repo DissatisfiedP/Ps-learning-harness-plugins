@@ -21,7 +21,8 @@
 	  modulo reduction (a very small bias for huge spans). When hi < lo it
 	  returns `lo`. Both arguments must be whole numbers: a fraction is
 	  `bad argument #1: error converting Lua number to i64 (out of range)`.
-	  Keep `hi - lo` below 2^63; a wider span is an error or a wrong value.
+	  Any two whole numbers in the 64-bit integer range work (app builds from
+	  before 2026-11-15 failed when `hi - lo` reached 2^63).
 ]=]
 export type Rng = {
 	-- [0, 1)
