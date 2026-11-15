@@ -22,8 +22,9 @@ flake.nix                   the pinned tools (tar, gzip, jq, yq, gh, curl)
 
 ## Using it in the app
 
-Settings → Registries → add `https://dissatisfiedp.github.io/ps-learn-registry/index.json`
-(`index_url` in `registry.toml`). The repository must be public: the app
+The app lists this registry by default
+(`https://dissatisfiedp.github.io/Ps-learning-harness-plugins/index.json`,
+`index_url` in `registry.toml`). The repository must be public: the app
 downloads release assets without credentials.
 
 ## Adding or updating a plugin
@@ -87,7 +88,7 @@ by the app's own checker. Run it from the app repo before opening a pull
 request:
 
 ```sh
-cargo run -p harness --bin plugin -- test ../ps-learn-registry/plugins/<id>
+cargo run -p harness --bin plugin -- test <path to this repo>/plugins/<id>
 ```
 
 ## How publishing works
@@ -115,8 +116,8 @@ with version bumps.
 
 ## First-time setup on GitHub
 
-1. Create the public repository `DissatisfiedP/ps-learn-registry` (or change
-   `repository` and `index_url` in `registry.toml`) and push `master`.
+1. Create the public repository `DissatisfiedP/Ps-learning-harness-plugins` (or
+   change `repository` and `index_url` in `registry.toml`) and push `master`.
 2. Settings → Pages → Source: **GitHub Actions**.
 3. The first push to master releases every plugin and deploys the index.
 
