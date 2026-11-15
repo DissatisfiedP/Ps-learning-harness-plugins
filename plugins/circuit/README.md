@@ -38,9 +38,9 @@ Draws, solves and grades small linear circuits: DC and single-frequency AC, by m
 | `equations.luau` | The node-voltage equations as text |
 | `report.luau` | The model-facing text |
 | `format.luau` | Engineering notation and phasor text |
-| `canvas.luau` | The SVG being drawn: bounds, rounding, text with subscripts |
-| `symbols.luau` | One symbol per part |
-| `marks.luau` | Arrows, polarities, paths, loops, crosses, highlights, labels |
+| `canvas.luau` | The SVG being drawn: bounds, rounding, text with subscripts, which boxes are taken, and placing a label where none is |
+| `symbols.luau` | One symbol per part, and its caption |
+| `marks.luau` | Arrows, polarities, paths, loops, crosses, highlights, labels, and the places each may take |
 | `schematic.luau` | Grid-to-page layout and the drawing order |
 | `grade.luau` | Answer-mode grading by re-solving the submitted circuit |
 
@@ -52,7 +52,9 @@ Values use engineering prefixes with `Âµ` for micro; AC values read `magnitude â
 
 ## Limits
 
-Linear parts only: no diodes, transistors, transformers or coupled inductors. One analysis per call: DC (steady state; capacitors open, inductors shorted) or AC at one frequency. No transient waveforms, only the time constant. The layout is the caller's: parts are drawn where their points say, and nothing is routed or moved to avoid overlaps except parallel branches and labels at a shared point.
+Linear parts only: no diodes, transistors, transformers or coupled inductors. One analysis per call: DC (steady state; capacitors open, inductors shorted) or AC at one frequency. No transient waveforms, only the time constant.
+
+The layout of the parts is the caller's: they are drawn where their points say, wires are not routed, and only parallel branches are moved apart. Labels do move: a caption, a current or voltage reading, a node or probe label and a path or highlight label each take the first of a few places beside their part or point where nothing is drawn yet (the least covered one when all are taken). Loops, notes and polarity signs stay where they are put, so in a crowded mesh a long reading can still end up over something.
 
 ## Tests
 

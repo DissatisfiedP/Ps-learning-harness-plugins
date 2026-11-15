@@ -220,27 +220,40 @@ local function valueText(part: model.Part, ac: boolean, byName: { [string]: mode
   return if value then format.eng(value, unit) else nil
 end
 
--- Name and value: above a horizontal part on one line, to the right of a
--- vertical one on two, never over the symbol.
+-- Name and value, never over the symbol: on one line above a horizontal part
+-- (below it when something is already there), on two lines to the right of
+-- a vertical one (to its left likewise).
 local function caption(c: canvas.Canvas, p: Placement, name: string?, value: string?)
   if p.horizontal then
     local text = if name and value then name .. " " .. value else name or value
     if text then
-      canvas.text(c, p.mx, p.my - p.wide - 8, text, "middle")
+      canvas.place(c, {
+        { x = p.mx, y = p.my - p.wide - 8, anchor = "middle" },
+        { x = p.mx, y = p.my + p.wide + 17, anchor = "middle" },
+      }, text)
     end
-  else
-    local x = p.mx + p.wide + 8
-    if name and value then
-      canvas.text(c, x, p.my - 3, name, "start")
-      canvas.text(c, x, p.my + 12, value, "start")
-    elseif name or value then
-      canvas.text(c, x, p.my + 4, (name or value) :: string, "start")
-    end
+    return
+  end
+  local right, left = p.mx + p.wide + 8, p.mx - p.wide - 8
+  if name and value then
+    -- The longer line decides the side; the other follows it.
+    local nameFirst = canvas.width(name) >= canvas.width(value)
+    local first, firstY = if nameFirst then name else value, if nameFirst then p.my - 3 else p.my + 12
+    local spot = canvas.place(c, {
+      { x = right, y = firstY, anchor = "start" },
+      { x = left, y = firstY, anchor = "end" },
+    }, first)
+    canvas.text(c, spot.x, if nameFirst then p.my + 12 else p.my - 3, if nameFirst then value else name, spot.anchor)
+  elseif name or value then
+    canvas.place(c, {
+      { x = right, y = p.my + 4, anchor = "start" },
+      { x = left, y = p.my + 4, anchor = "end" },
+    }, (name or value) :: string)
   end
 end
 
--- Draws a two-terminal part. `values` is false to caption names only.
-function symbols.draw(c: canvas.Canvas, p: Placement, ac: boolean, values: boolean, byName: { [string]: model.Part })
+-- Draws a two-terminal part's leads and body, and marks the body as taken.
+function symbols.draw(c: canvas.Canvas, p: Placement)
   local part = p.part
   local kind = part.type
   if kind == "wire" then
@@ -260,6 +273,23 @@ function symbols.draw(c: canvas.Canvas, p: Placement, ac: boolean, values: boole
   else
     local spec = model.DEPENDENT[kind]
     source(c, p, if spec then spec.out == "V" else kind == "V", spec ~= nil)
+  end
+  -- Slanted strokes claim no room of their own, so the body does.
+  local x1, y1 = at(p, -p.half, -p.wide)
+  local x2, y2 = at(p, p.half, p.wide)
+  canvas.occupy(c, x1, y1, x2, y2)
+  x1, y1 = at(p, -p.half, p.wide)
+  x2, y2 = at(p, p.half, -p.wide)
+  canvas.occupy(c, x1, y1, x2, y2)
+end
+
+-- Captions a two-terminal part with its name and, unless `values` is false,
+-- its value. Called once every body is drawn, so it can keep off them.
+function symbols.caption(c: canvas.Canvas, p: Placement, ac: boolean, values: boolean, byName: { [string]: model.Part })
+  local part = p.part
+  local kind = part.type
+  if kind == "wire" then
+    return
   end
   -- A switch is captioned only when it was given a name.
   local name: string? = model.nameOf(part)

@@ -110,61 +110,6 @@ local function place(parts: { Part }): ({ [Part]: Placement }, { Placement })
   return placed, order
 end
 
--- Which ways each point is taken, so a label there can avoid them.
-local function takenSides(parts: { Part }, order: { Placement }): { [string]: marks.Sides }
-  local sides: { [string]: marks.Sides } = {}
-  local function take(key: string?, dx: number, dy: number)
-    if not key or (dx == 0 and dy == 0) then
-      return
-    end
-    local s: marks.Sides = sides[key] or {}
-    sides[key] = s
-    if math.abs(dx) >= math.abs(dy) then
-      if dx > 0 then
-        s.right = true
-      else
-        s.left = true
-      end
-    elseif dy > 0 then
-      s.down = true
-    else
-      s.up = true
-    end
-  end
-  for _, p in order do
-    local part = p.part
-    local ka, kb = model.key(part.from), model.key(part.to)
-    take(ka, p.ux, p.uy)
-    take(kb, -p.ux, -p.uy)
-    take(ka, p.nx * p.shift, p.ny * p.shift)
-    take(kb, p.nx * p.shift, p.ny * p.shift)
-    for _, key in netlist.between(model.cell(part.from) :: model.Cell, model.cell(part.to) :: model.Cell) do
-      take(key, p.ux, p.uy)
-      take(key, -p.ux, -p.uy)
-    end
-  end
-  for _, part in parts do
-    if part.type == "ground" then
-      take(model.key(part.from), 0, 1)
-    elseif part.type == "opamp" then
-      local plus, minus, output = pin(part.from), pin(part.to), pin(part.third)
-      if plus and minus then
-        local dir = if not output or output.x >= math.max(plus.x, minus.x) then 1 else -1
-        local ym = (plus.y + minus.y) / 2
-        take(model.key(part.from), dir, 0)
-        take(model.key(part.from), 0, ym - plus.y)
-        take(model.key(part.to), dir, 0)
-        take(model.key(part.to), 0, ym - minus.y)
-        if output then
-          take(model.key(part.third), -dir, 0)
-          take(model.key(part.third), 0, ym - output.y)
-        end
-      end
-    end
-  end
-  return sides
-end
-
 -- The box around some points, grown by `pad`.
 local function box(points: { Px }, pad: number): (number, number, number, number)
   local x1, y1, x2, y2 = math.huge, math.huge, -math.huge, -math.huge
@@ -189,13 +134,6 @@ function schematic.draw(circuit: model.Circuit, result: model.Solution?): string
   local byName = model.index(parts)
   local net = netlist.build(parts, model.meters(parts, byName), model.letters(circuit), {})
   local placed, order = place(parts)
-  local taken = takenSides(parts, order)
-  -- The sides taken at a point; a label drawn there takes one more.
-  local function sidesAt(key: string): marks.Sides
-    local s: marks.Sides = taken[key] or {}
-    taken[key] = s
-    return s
-  end
   local c = canvas.new()
 
   local function placementOf(name: string?): Placement?
@@ -244,15 +182,19 @@ function schematic.draw(circuit: model.Circuit, result: model.Solution?): string
       local same = p.ax == a.x and p.ay == a.y and p.bx == b.x and p.by == b.y
       local flipped = p.ax == b.x and p.ay == b.y and p.bx == a.x and p.by == a.y
       if (same or flipped) and not model.isShort(p.part) then
-        marks.voltage(c, p, text, flipped, 0, color)
+        marks.voltage(c, p, text, flipped, color)
         return
       end
     end
     marks.between(c, a.x, a.y, b.x, b.y, text, color)
   end
 
-  -- Under the circuit: current paths and highlighted regions.
+  -- Under the circuit: current paths and highlighted regions. Their labels
+  -- wait until the circuit is drawn, so they can keep off it.
+  local late: { { spots: { canvas.Spot }, text: string, color: string } } = {}
   for _, annotation in circuit.annotations do
+    local spots: { canvas.Spot }? = nil
+    local color = marks.CURRENT
     if annotation.type == "path" then
       local points = {}
       for _, point in annotation.points or {} do
@@ -262,26 +204,33 @@ function schematic.draw(circuit: model.Circuit, result: model.Solution?): string
           table.insert(points, at.y)
         end
       end
-      marks.path(c, points, annotation.label, annotation.closed == true, marks.color(annotation.color, marks.CURRENT))
+      color = marks.color(annotation.color, marks.CURRENT)
+      spots = marks.path(c, points, annotation.closed == true, color)
     elseif annotation.type == "highlight" then
       local points = region(annotation)
       if #points > 0 then
         local x1, y1, x2, y2 = box(points, 28)
-        marks.highlight(c, x1, y1, x2, y2, annotation.label, marks.color(annotation.color, "#e8590c"))
+        color = marks.color(annotation.color, marks.REGION)
+        spots = marks.highlight(c, x1, y1, x2, y2, color)
       end
+    end
+    local label = annotation.label
+    if spots and #spots > 0 and label then
+      table.insert(late, { spots = spots, text = label, color = color })
     end
   end
 
   -- The circuit itself. A source switched off is faded and crossed out.
+  local function isOff(part: Part): boolean
+    return part.off == true and model.isSource(part.type)
+  end
   for _, p in order do
-    local part = p.part
-    if part.off and model.isSource(part.type) then
+    if isOff(p.part) then
       canvas.layer(c, { opacity = OFF_OPACITY }, function(layer)
-        symbols.draw(layer, p, ac, show.values ~= false, byName)
+        symbols.draw(layer, p)
       end)
-      marks.cross(c, p, marks.VOLTAGE)
     else
-      symbols.draw(c, p, ac, show.values ~= false, byName)
+      symbols.draw(c, p)
     end
   end
   for _, part in parts do
@@ -299,6 +248,34 @@ function schematic.draw(circuit: model.Circuit, result: model.Solution?): string
     local at = keyPx(point)
     if at and (net.ends[point] or 0) >= 3 then
       symbols.dot(c, at, 3)
+    end
+  end
+
+  -- Marks whose place is given: mesh loops and notes. Everything drawn after
+  -- them that has a choice keeps off them.
+  for _, annotation in circuit.annotations do
+    local at = page(annotation.at)
+    if at and annotation.type == "loop" then
+      local color = marks.color(annotation.color, marks.CURRENT)
+      marks.loop(c, at.x, at.y, annotation.label, annotation.direction ~= "ccw", color)
+    elseif at and annotation.type == "note" then
+      local text = annotation.text or annotation.label
+      if text then
+        marks.note(c, at.x, at.y, text, if annotation.color then marks.color(annotation.color, "currentColor") else nil)
+      end
+    end
+  end
+
+  -- Captions, once every body is drawn.
+  local values = show.values ~= false
+  for _, p in order do
+    if isOff(p.part) then
+      canvas.layer(c, { opacity = OFF_OPACITY }, function(layer)
+        symbols.caption(layer, p, ac, values, byName)
+      end)
+      marks.cross(c, p, marks.VOLTAGE)
+    else
+      symbols.caption(c, p, ac, values, byName)
     end
   end
 
@@ -372,59 +349,87 @@ function schematic.draw(circuit: model.Circuit, result: model.Solution?): string
     end
   end
 
+  -- Marks on parts, in the order they get to choose their place: every
+  -- current first (it belongs on its lead), then the voltages, then powers.
   for _, p in order do
-    local part = p.part
-    local clear = 0
-    local current = currents[part]
+    local current = currents[p.part]
     if current then
       local reading = current.reading
-      local solved = if result then result.currents[model.nameOf(part)] else nil
+      local solved = if result then result.currents[model.nameOf(p.part)] else nil
       if not reading and current.value and solved ~= nil then
         reading = format.value(if current.reverse then num.mul(solved, -1) else solved, "A")
       end
-      local width = marks.current(c, p, joined(current.label, reading, " = "), current.reverse, current.color)
-      clear = if width == 0 then 0 elseif p.horizontal then 15 else width + 8
+      marks.current(c, p, joined(current.label, reading, " = "), current.reverse, current.color)
     end
-    local voltage = voltages[part]
-    if voltage then
-      local reading = voltage.reading
-      local va, vb = voltageAt(part.from), voltageAt(part.to)
-      if not reading and voltage.value and va ~= nil and vb ~= nil then
-        local across = num.sub(va, vb)
-        reading = format.value(if voltage.reverse then num.mul(across, -1) else across, "V")
+  end
+  -- Vertical parts first: their polarity signs have one place, which the
+  -- marks of horizontal parts can then keep off.
+  for _, upright in { true, false } do
+    for _, p in order do
+      local part = p.part
+      local voltage = voltages[part]
+      if voltage and p.horizontal ~= upright then
+        local reading = voltage.reading
+        local va, vb = voltageAt(part.from), voltageAt(part.to)
+        if not reading and voltage.value and va ~= nil and vb ~= nil then
+          local drop = num.sub(va, vb)
+          reading = format.value(if voltage.reverse then num.mul(drop, -1) else drop, "V")
+        end
+        marks.voltage(c, p, joined(voltage.label, reading, " = "), voltage.reverse, voltage.color)
       end
-      marks.voltage(c, p, joined(voltage.label, reading, " = "), voltage.reverse, clear, voltage.color)
-      clear += if p.horizontal then 15 else 30
     end
-    local tag = tags[part]
+  end
+  -- Voltages between two points: annotations, then what dependent sources
+  -- that follow two points follow.
+  for _, annotation in circuit.annotations do
+    if annotation.type == "voltage" and not annotation.part then
+      local va, vb = voltageAt(annotation.from), voltageAt(annotation.to)
+      local reading = if annotation.value and va ~= nil and vb ~= nil then format.value(num.sub(va, vb), "V") else nil
+      local color = marks.color(annotation.color, marks.VOLTAGE)
+      across(page(annotation.from), page(annotation.to), joined(annotation.label, reading, " = "), color)
+    end
+  end
+  for _, part in parts do
+    local spec = model.DEPENDENT[part.type]
+    local control = part.control
+    if spec and spec.by == "V" and control and not control.part then
+      across(pin(control.plus), pin(control.minus), symbols.controlLabel(part, byName), marks.VOLTAGE)
+    end
+  end
+  for _, p in order do
+    local tag = tags[p.part]
     if tag then
-      marks.tag(c, p, tag, clear, marks.color("purple", "currentColor"))
+      marks.tag(c, p, tag, marks.POWER)
     end
   end
 
   -- Labels at points: named nodes, terminals, probes, then letters for the
-  -- nodes nothing names.
+  -- nodes nothing names. Every dot is drawn before any label, so a label
+  -- keeps off its neighbours' dots too.
+  local labels: { { at: Px, text: string, color: string? } } = {}
+  local function addLabel(at: Px, text: string, color: string?)
+    table.insert(labels, { at = at, text = text, color = color })
+  end
   local function withVoltage(name: string, point: model.Point?): string
     local value = if show.voltages then voltageAt(point) else nil
     return if value ~= nil then name .. ": " .. format.value(value, "V") else name
   end
   for _, part in parts do
     local at = pin(part.from)
-    local key = model.key(part.from)
     local kind = part.type
-    if at and key and kind == "node" then
+    if at and kind == "node" then
       symbols.dot(c, at, 3, marks.NODE)
       if part.label then
-        marks.label(c, at.x, at.y, withVoltage(part.label, part.from), sidesAt(key), marks.NODE)
+        addLabel(at, withVoltage(part.label, part.from), marks.NODE)
       end
-    elseif at and key and kind == "terminal" then
+    elseif at and kind == "terminal" then
       symbols.terminal(c, at)
       if part.label then
-        marks.label(c, at.x, at.y, withVoltage(part.label, part.from), sidesAt(key), nil)
+        addLabel(at, withVoltage(part.label, part.from), nil)
       end
-    elseif at and key and kind == "probe" and not part.part then
-      local label = model.nameOf(part)
-      local value = if result then result.probes[label] else nil
+    elseif at and kind == "probe" and not part.part then
+      local name = model.nameOf(part)
+      local value = if result then result.probes[name] else nil
       local reading: string? = nil
       if part.hidden then
         reading = "?"
@@ -432,12 +437,12 @@ function schematic.draw(circuit: model.Circuit, result: model.Solution?): string
         reading = format.value(value, "V")
       end
       symbols.dot(c, at, 4)
-      marks.label(c, at.x, at.y, joined(label, reading, ": ") :: string, sidesAt(key), nil)
+      addLabel(at, joined(name, reading, ": ") :: string, nil)
       -- A probe between two nodes also marks its reference.
       local reference, referenceKey = pin(part.to), model.key(part.to)
-      if reference and referenceKey and referenceKey ~= key and (net.nodeOf[referenceKey] or 0) ~= 0 then
+      if reference and referenceKey and referenceKey ~= model.key(part.from) and (net.nodeOf[referenceKey] or 0) ~= 0 then
         symbols.dot(c, reference, 2.5)
-        marks.label(c, reference.x, reference.y, "−", sidesAt(referenceKey), nil)
+        addLabel(reference, "−", nil)
       end
     end
   end
@@ -449,16 +454,21 @@ function schematic.draw(circuit: model.Circuit, result: model.Solution?): string
         local value = if show.voltages and result then result.nodes[key] else nil
         local text = if value ~= nil then net.names[node] .. ": " .. format.value(value, "V") else net.names[node]
         symbols.dot(c, at, 3, marks.NODE)
-        marks.label(c, at.x, at.y, text, sidesAt(key), marks.NODE)
+        addLabel(at, text, marks.NODE)
       end
     end
   end
+  for _, entry in labels do
+    marks.label(c, entry.at.x, entry.at.y, entry.text, entry.color)
+  end
+  for _, entry in late do
+    canvas.place(c, entry.spots, entry.text, { fill = entry.color })
+  end
 
-  -- Over everything: what is crossed out, mesh loops, voltages between points, notes.
+  -- Over everything: what is crossed out.
   for _, annotation in circuit.annotations do
-    local kind = annotation.type
-    local color = annotation.color
-    if kind == "cross" then
+    if annotation.type == "cross" then
+      local color = marks.color(annotation.color, marks.VOLTAGE)
       local crossed = false
       local names = table.clone(annotation.parts or {})
       if annotation.part then
@@ -467,39 +477,15 @@ function schematic.draw(circuit: model.Circuit, result: model.Solution?): string
       for _, name in names do
         local p = placementOf(name)
         if p then
-          marks.cross(c, p, marks.color(color, marks.VOLTAGE))
+          marks.cross(c, p, color)
           crossed = true
         end
       end
       local a, b = page(annotation.from), page(annotation.to)
       if not crossed and a and b then
         local x1, y1, x2, y2 = box({ a, b }, 14)
-        marks.crossBox(c, x1, y1, x2, y2, marks.color(color, marks.VOLTAGE))
+        marks.crossBox(c, x1, y1, x2, y2, color)
       end
-    elseif kind == "loop" then
-      local at = page(annotation.at)
-      if at then
-        marks.loop(c, at.x, at.y, annotation.label, annotation.direction ~= "ccw", marks.color(color, marks.CURRENT))
-      end
-    elseif kind == "voltage" and not annotation.part then
-      local va, vb = voltageAt(annotation.from), voltageAt(annotation.to)
-      local reading = if annotation.value and va ~= nil and vb ~= nil then format.value(num.sub(va, vb), "V") else nil
-      across(page(annotation.from), page(annotation.to), joined(annotation.label, reading, " = "), marks.color(color, marks.VOLTAGE))
-    elseif kind == "note" then
-      local at = page(annotation.at)
-      local text = annotation.text or annotation.label
-      if at and text then
-        marks.note(c, at.x, at.y, text, if color then marks.color(color, "currentColor") else nil)
-      end
-    end
-  end
-
-  -- Dependent sources that follow two points get their polarity there.
-  for _, part in parts do
-    local spec = model.DEPENDENT[part.type]
-    local control = part.control
-    if spec and spec.by == "V" and control and not control.part then
-      across(pin(control.plus), pin(control.minus), symbols.controlLabel(part, byName), marks.VOLTAGE)
     end
   end
 

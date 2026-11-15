@@ -5,16 +5,17 @@
   crossed-out parts and highlighted regions. Marks are coloured so they stand
   apart from the circuit; the colours are mid-tones that read on a light and
   on a dark page.
+
+  A label that has a choice of places goes to the first one where nothing is
+  drawn yet (`canvas.place`), so the order of drawing matters: the circuit
+  first, then marks at fixed places, then the labels that can move.
 ]]
 local canvas = require("./canvas")
 local symbols = require("./symbols")
 
 type Canvas = canvas.Canvas
 type Placement = symbols.Placement
-
--- Which ways a point is already taken by a wire, a part or a symbol.
--- `stack` counts the labels already piled above it.
-export type Sides = { up: boolean?, down: boolean?, left: boolean?, right: boolean?, stack: number? }
+type Spot = canvas.Spot
 
 local COLORS: { [string]: string } = {
   red = "#e03131",
@@ -25,11 +26,15 @@ local COLORS: { [string]: string } = {
   gray = "#868e96",
 }
 
+local ROW = 15 -- px between two lines of labels
+
 local marks = {}
 
 marks.CURRENT = COLORS.blue
 marks.VOLTAGE = COLORS.red
 marks.NODE = COLORS.green
+marks.REGION = COLORS.orange
+marks.POWER = COLORS.purple
 
 -- A named colour, or `fallback` for none or an unknown name.
 function marks.color(name: string?, fallback: string): string
@@ -45,69 +50,120 @@ end
 
 -- An arrowhead on the `from` lead of a part, pointing the way its current is
 -- counted (from → to, or the other way when `reverse`), with `text` beside it.
--- Returns the width the text took, so a voltage mark can stay clear of it.
-function marks.current(c: Canvas, p: Placement, text: string?, reverse: boolean, color: string): number
+function marks.current(c: Canvas, p: Placement, text: string?, reverse: boolean, color: string)
   local t = -(p.len / 2 + p.half) / 2
   local dir = if reverse then -1 else 1
   local x, y = symbols.at(p, t + 5 * dir, 0)
   head(c, x, y, p.ux * dir, p.uy * dir, color, 5.5)
   if not text then
-    return 0
+    return
   end
   local mx, my = symbols.at(p, t, 0)
+  local spots: { Spot }
   if p.horizontal then
-    -- Under the lead, starting at the pin and running towards the body, so
-    -- it never crosses a wire that turns the corner there.
+    -- Starting at the pin and running towards the body, so it never crosses
+    -- a wire that turns the corner there: under the lead, else over it.
     local leftToRight = p.ux >= 0
-    local px = symbols.at(p, -p.len / 2, 0)
-    canvas.text(c, px + (if leftToRight then 8 else -8), my + 17, text, if leftToRight then "start" else "end", { fill = color })
+    local px = symbols.at(p, -p.len / 2, 0) + (if leftToRight then 8 else -8)
+    local anchor: canvas.Anchor = if leftToRight then "start" else "end"
+    spots = {
+      { x = px, y = my + 19, anchor = anchor },
+      { x = px, y = my - 9, anchor = anchor },
+      { x = px, y = my + 19 + ROW, anchor = anchor },
+    }
   else
-    canvas.text(c, mx - 9, my + 4, text, "end", { fill = color })
+    spots = {
+      { x = mx - 9, y = my + 4, anchor = "end" },
+      { x = mx + 9, y = my + 4, anchor = "start" },
+    }
   end
-  return canvas.width(text)
+  canvas.place(c, spots, text, { fill = color })
 end
 
--- `text` on the far side of a part from its caption: below a horizontal part,
--- left of a vertical one. `clear` px are left free next to the part.
--- Returns where the text's row or column is, for polarity signs to share.
-local function tag(c: Canvas, p: Placement, text: string?, clear: number, color: string): number
+-- Appends a place a label could go. (A helper, so the anchor keeps its type.)
+local function add(spots: { Spot }, x: number, y: number, anchor: canvas.Anchor)
+  table.insert(spots, { x = x, y = y, anchor = anchor })
+end
+
+-- Where a reading that belongs to a part can go, nearest first: below a
+-- horizontal part or left of a vertical one (the far side from its caption),
+-- further out row by row, then on the caption's side beyond it.
+local function beside(p: Placement): { Spot }
+  local spots: { Spot } = {}
   if p.horizontal then
-    local y = p.my + p.wide + 15 + clear
-    if text then
-      canvas.text(c, p.mx, y, text, "middle", { fill = color })
+    for row = 0, 2 do
+      add(spots, p.mx, p.my + p.wide + 15 + row * ROW, "middle")
     end
-    return y
+    for row = 1, 2 do
+      add(spots, p.mx, p.my - p.wide - 8 - row * ROW, "middle")
+    end
+  else
+    add(spots, p.mx - p.wide - 9, p.my + 4, "end")
+    -- Beside the caption's two lines, above them and below them.
+    for _, dy in { 4, -18, 27 } do
+      add(spots, p.mx + p.wide + 8, p.my + dy, "start")
+    end
+    for step = 1, 4 do
+      add(spots, p.mx + p.wide + 8 + step * 24, p.my + 4, "start")
+    end
   end
-  local x = p.mx - p.wide - 9 - clear
-  if text then
-    canvas.text(c, x, p.my + 4, text, "end", { fill = color })
-  end
-  return x
+  return spots
 end
 
 -- A reading that belongs to a part but has no direction (its power).
-function marks.tag(c: Canvas, p: Placement, text: string, clear: number, color: string)
-  tag(c, p, text, clear, color)
+function marks.tag(c: Canvas, p: Placement, text: string, color: string)
+  canvas.place(c, beside(p), text, { fill = color })
 end
 
--- `+` by the `from` end and `−` by the `to` end of a part (swapped when
--- `reverse`), with `text` between them: the voltage V(from) − V(to).
-function marks.voltage(c: Canvas, p: Placement, text: string?, reverse: boolean, clear: number, color: string)
-  local line = tag(c, p, text, clear, color)
-  local reach = math.min(p.len / 2 - 4, p.half + 10)
-  local half = if text then canvas.width(text) / 2 + 8 else 0
+-- `+` towards the `from` end and `−` towards the `to` end of a part (swapped
+-- when `reverse`), with `text` for the voltage V(from) − V(to). Beside a
+-- horizontal part the signs flank the text and the three move together to a
+-- free row. Beside a vertical part the signs stay by the ends of the body,
+-- on the side away from the caption, and the text goes where there is room:
+-- between them, beside a lead, or past the caption.
+function marks.voltage(c: Canvas, p: Placement, text: string?, reverse: boolean, color: string)
   local style: canvas.TextStyle = { fill = color, bold = true }
-  for _, side in { -1, 1 } do
-    local glyph = if (side < 0) ~= reverse then "+" else "−"
-    local x, y = symbols.at(p, reach * side, 0)
-    if p.horizontal then
-      -- Along the text's row, outside the text.
-      local towards = if x >= p.mx then 1 else -1
-      canvas.text(c, p.mx + towards * math.max(math.abs(x - p.mx), half), line, glyph, "middle", style)
-    else
-      canvas.text(c, line, y + 4, glyph, "end", style)
+  local fromSign, toSign = if reverse then "−" else "+", if reverse then "+" else "−"
+  if p.horizontal then
+    local spots: { Spot } = {}
+    for row = 0, 2 do
+      add(spots, p.mx, p.my + p.wide + 15 + row * ROW, "middle")
     end
+    for row = 1, 2 do
+      add(spots, p.mx, p.my - p.wide - 8 - row * ROW, "middle")
+    end
+    -- With no text the signs stand by the ends of the body.
+    local half = math.min(p.len / 2 - 4, p.half + 10)
+    local spot = spots[1]
+    if text then
+      half = canvas.width(text) / 2 + 10
+      spot = canvas.place(c, spots, text, { fill = color }, 18, 0)
+    end
+    local fromSide = if p.ux >= 0 then -1 else 1
+    canvas.text(c, p.mx + fromSide * half, spot.y, fromSign, "middle", style)
+    canvas.text(c, p.mx - fromSide * half, spot.y, toSign, "middle", style)
+    return
   end
+
+  local left = p.mx - p.wide - 9
+  local reach = p.half + 4
+  local fromSide = if p.uy >= 0 then -1 else 1
+  canvas.text(c, left + 3, p.my + fromSide * reach + 4, fromSign, "end", style)
+  canvas.text(c, left + 3, p.my - fromSide * reach + 4, toSign, "end", style)
+  if not text then
+    return
+  end
+  -- Halfway along a lead, between the body and the pin.
+  local lead = (p.half + p.len / 2) / 2
+  local spots: { Spot } = {}
+  add(spots, left, p.my + 4, "end")
+  add(spots, p.mx + 9, p.my + lead + 4, "start")
+  add(spots, p.mx - 9, p.my + lead + 4, "end")
+  add(spots, p.mx + 9, p.my - lead + 4, "start")
+  for step = 1, 4 do
+    add(spots, p.mx + p.wide + 8 + step * 24, p.my + 4, "start")
+  end
+  canvas.place(c, spots, text, { fill = color })
 end
 
 -- `+` at one point, `−` at another and `text` halfway: a voltage between two
@@ -155,9 +211,10 @@ function marks.crossBox(c: Canvas, x1: number, y1: number, x2: number, y2: numbe
   canvas.line(c, x1, y2, x2, y1, attrs)
 end
 
--- A dashed outline around a region, with `text` above its corner: a
--- supernode, the part of the circuit being replaced, and so on.
-function marks.highlight(c: Canvas, x1: number, y1: number, x2: number, y2: number, text: string?, color: string)
+-- A dashed outline around a region: a supernode, the part of the circuit
+-- being replaced, and so on. Returns where its label can go: above a top
+-- corner or below a bottom one.
+function marks.highlight(c: Canvas, x1: number, y1: number, x2: number, y2: number, color: string): { Spot }
   canvas.rect(c, x1, y1, x2 - x1, y2 - y1, {
     stroke = color,
     ["stroke-width"] = 1.5,
@@ -166,16 +223,22 @@ function marks.highlight(c: Canvas, x1: number, y1: number, x2: number, y2: numb
     ["fill-opacity"] = 0.07,
     rx = 10,
   })
-  if text then
-    canvas.text(c, x1 + 4, y1 - 6, text, "start", { fill = color })
-  end
+  return {
+    { x = x1 + 4, y = y1 - 6, anchor = "start" },
+    { x = x2 - 4, y = y1 - 6, anchor = "end" },
+    { x = x1 + 4, y = y2 + 15, anchor = "start" },
+    { x = x2 - 4, y = y2 + 15, anchor = "end" },
+    { x = x1 + 4, y = y1 - 6 - ROW, anchor = "start" },
+  }
 end
 
 -- A translucent band along `points` (a flat x, y list) with an arrowhead on
--- each stretch: the path a current takes. Drawn under the circuit.
-function marks.path(c: Canvas, points: { number }, text: string?, closed: boolean, color: string)
+-- each stretch: the path a current takes. Drawn under the circuit. Returns
+-- where its label can go: beside the arrowhead of each stretch.
+function marks.path(c: Canvas, points: { number }, closed: boolean, color: string): { Spot }
+  local spots: { Spot } = {}
   if #points < 4 then
-    return
+    return spots
   end
   canvas.poly(c, points, closed, {
     stroke = color,
@@ -185,7 +248,6 @@ function marks.path(c: Canvas, points: { number }, text: string?, closed: boolea
     ["stroke-linecap"] = "round",
   })
   local count = #points / 2
-  local labelled = false
   for i = 1, if closed then count else count - 1 do
     local j = i % count + 1
     local ax, ay, bx, by = points[2 * i - 1], points[2 * i], points[2 * j - 1], points[2 * j]
@@ -195,16 +257,16 @@ function marks.path(c: Canvas, points: { number }, text: string?, closed: boolea
       -- A quarter of the way along: clear of a part drawn at the middle.
       local mx, my = ax + ux * len * 0.24, ay + uy * len * 0.24
       head(c, mx + ux * 6, my + uy * 6, ux, uy, color, 7)
-      if text and not labelled then
-        labelled = true
-        if math.abs(ux) >= math.abs(uy) then
-          canvas.text(c, mx, my + 21, text, "middle", { fill = color })
-        else
-          canvas.text(c, mx - 12, my + 4, text, "end", { fill = color })
-        end
+      if math.abs(ux) >= math.abs(uy) then
+        add(spots, mx, my + 21, "middle")
+        add(spots, mx, my - 12, "middle")
+      else
+        add(spots, mx - 12, my + 4, "end")
+        add(spots, mx + 12, my + 4, "start")
       end
     end
   end
+  return spots
 end
 
 -- A mesh current: most of a circle with an arrowhead, `text` in its middle.
@@ -216,6 +278,7 @@ function marks.loop(c: Canvas, x: number, y: number, text: string?, clockwise: b
   local sx, sy = x + radius * math.cos(from), y + radius * math.sin(from)
   local ex, ey = x + radius * math.cos(to), y + radius * math.sin(to)
   canvas.cover(c, x, y, radius + 3)
+  canvas.occupy(c, x - radius - 2, y - radius - 2, x + radius + 2, y + radius + 2)
   canvas.path(
     c,
     { "M", sx, sy, string.format("A %d %d 0 1 %d", radius, radius, if clockwise then 1 else 0), ex, ey },
@@ -231,26 +294,25 @@ function marks.note(c: Canvas, x: number, y: number, text: string, color: string
   canvas.text(c, x, y + 4, text, "middle", { fill = color })
 end
 
--- `text` next to the point (x, y), on a side nothing is drawn on: right, then
--- left, then above (to the upper right when a wire goes up). Labels sharing
--- a point stack upwards, so a probe and a node letter never overprint.
-function marks.label(c: Canvas, x: number, y: number, text: string, sides: Sides, color: string?)
-  local style: canvas.TextStyle = { fill = color }
-  if not sides.right then
-    sides.right = true
-    canvas.text(c, x + 9, y + 4, text, "start", style)
-  elseif not sides.left then
-    sides.left = true
-    canvas.text(c, x - 9, y + 4, text, "end", style)
-  else
-    local level = sides.stack or 0
-    sides.stack = level + 1
-    if sides.up then
-      canvas.text(c, x + 7, y - 7 - 15 * level, text, "start", style)
-    else
-      canvas.text(c, x, y - 9 - 15 * level, text, "middle", style)
-    end
+-- `text` next to the point (x, y), wherever nothing is drawn: beside it,
+-- above or below it, at a corner, and failing all those stacked above. A
+-- probe and a node letter at one point therefore never overprint.
+function marks.label(c: Canvas, x: number, y: number, text: string, color: string?)
+  local spots: { Spot } = {
+    { x = x + 9, y = y + 4, anchor = "start" },
+    { x = x - 9, y = y + 4, anchor = "end" },
+    { x = x, y = y - 9, anchor = "middle" },
+    { x = x, y = y + 19, anchor = "middle" },
+    { x = x + 7, y = y - 7, anchor = "start" },
+    { x = x - 7, y = y - 7, anchor = "end" },
+    { x = x + 7, y = y + 17, anchor = "start" },
+    { x = x - 7, y = y + 17, anchor = "end" },
+  }
+  for level = 1, 3 do
+    add(spots, x, y - 9 - level * ROW, "middle")
+    add(spots, x + 7, y - 7 - level * ROW, "start")
   end
+  canvas.place(c, spots, text, { fill = color })
 end
 
 return marks

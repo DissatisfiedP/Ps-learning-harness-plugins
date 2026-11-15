@@ -595,6 +595,36 @@ return {
     has(svg, ">snake_</text>")
   end,
 
+  labels_sharing_a_point_do_not_overprint = function()
+    -- The probe and the node letter both sit at (2,2).
+    local request = table.clone(divider)
+    request.show = { nodes = true, voltages = true }
+    local svg = api.circuit_draw(request).artifact.svg
+    local function where(text: string): (number, number)
+      local x, y = svg:match('x="(%-?[%d.]+)" y="(%-?[%d.]+)">' .. text .. "</text>")
+      assert(x and y, "no label `" .. text .. "` in:\n" .. svg)
+      return tonumber(x) :: number, tonumber(y) :: number
+    end
+    local px, py = where("Vout: 3 V")
+    local nx, ny = where("B: 3 V")
+    assert(math.abs(py - ny) >= 12 or math.abs(px - nx) >= 60, string.format("labels at (%g,%g) and (%g,%g) overlap", px, py, nx, ny))
+  end,
+
+  a_voltage_label_moves_off_a_mesh_loop = function()
+    -- Left of R2, between its + and −, is where v reads best: x = 124, right-aligned.
+    local function labelX(annotations): number
+      local request = table.clone(twoSources)
+      request.annotations = annotations
+      local x = api.circuit_draw(request).artifact.svg:match('x="(%-?[%d.]+)" y="%-?[%d.]+">vx = 10 V</text>')
+      assert(x, "no voltage label")
+      return tonumber(x) :: number
+    end
+    local mark = { type = "voltage", part = "R2", label = "vx", value = true }
+    assert(labelX({ mark }) == 124, "the label is not beside the part")
+    -- A loop drawn in that mesh takes the place, so the label goes elsewhere.
+    assert(labelX({ { type = "loop", at = { 1, 1 }, label = "i_1" }, mark }) ~= 124, "the label is drawn over the loop")
+  end,
+
   parallel_parts_are_drawn_side_by_side = function()
     local svg = api.circuit_draw(dividerWith({ id = "RL", type = "R", from = { 2, 0 }, to = { 2, 2 }, value = 3000 })).artifact.svg
     -- R2 and RL join the same points (RL the other way round): one is drawn
