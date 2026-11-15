@@ -9,12 +9,15 @@ installs, never this repository.
 ```
 registry.toml               name, GitHub repository, published index URL
 plugins/<id>/               one plugin: plugin.toml at the root, then src/, views/, prompts/, …
+plugin-api/                 type-only stubs of the @harness/* host modules, a copy of the
+                            app repo's crates/harness/plugin-api/
+docs/                       plugin API documentation
 scripts/registry.sh         pack, check, index, release (run by both workflows)
 .github/workflows/
   check.yml                 pull requests: pack + check, upload the result
   publish.yml               master: release new versions, deploy the index
 flake.nix                   the pinned tools (tar, gzip, jq, yq, gh, curl)
-.luaurc                     editor/luau-analyze alias: @harness → the app repo's type modules
+.luaurc                     editor/luau-analyze alias: @harness → ./plugin-api
 ```
 
 ## Using it in the app
@@ -56,12 +59,13 @@ local util = require("./util")        -- src/util.luau, next to this file
 A test in `tests/` reaches the package with `require("../src/main")` and the
 golden-file helper with `require("@harness/test")`.
 
-The types of the `@harness/*` modules live in the app repo, one source of
-truth: `crates/harness/plugin-api/<name>.luau`. The `.luaurc` at this repo's
-root aliases `harness` to `../Ps_learn_harness/crates/harness/plugin-api`, so
-luau-lsp and `luau-analyze` resolve them when the app repo is checked out next
-to this one (as `Ps_learn_harness`). The app's `plugin test` does not need
-that layout: it type-checks with the bundled types wherever the package is.
+The types of the `@harness/*` modules are in `plugin-api/<name>.luau` here:
+type-only stubs mirrored from the app repo's `crates/harness/plugin-api/`,
+with identical signatures. The `.luaurc` at this repo's root aliases
+`harness` to `./plugin-api`, so luau-lsp and `luau-analyze` resolve them in
+this checkout alone. The app's `plugin test` does not read this copy: it
+type-checks with the copy bundled in the app, which is the one that counts.
+The plugin API is documented in [`docs/README.md`](docs/README.md).
 
 ## What is checked
 
